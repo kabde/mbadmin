@@ -1,0 +1,46 @@
+name = "admin-mba"
+main = "worker-test.js"
+compatibility_date = "2024-01-01"
+account_id = "319ff88ac328c3c0003a7927a28f849e"
+
+[env.production]
+name = "admin-mba"
+
+# Custom domain configuration
+[[routes]]
+pattern = "is.mediabuying.ac/*"
+zone_name = "mediabuying.ac"
+
+# Alternative route for www subdomain
+[[routes]]
+pattern = "www.is.mediabuying.ac/*"
+zone_name = "mediabuying.ac"
+
+# D1 Database binding
+[[d1_databases]]
+binding = "AFFILIATE_DB"
+database_name = "admin-mba-db"
+database_id = "161e0be8-d46b-46ec-8ebb-324e81c054e1"
+
+# R2 Bucket binding
+[[r2_buckets]]
+binding = "MBA_STORAGE"
+bucket_name = "mba"
+
+# Environment variables
+[vars]
+JWT_SECRET = "a7f8d9e2c4b6f1a3e5d8c7b9f2e4a6c8d1b3f5e7a9c2d4b6f8e1a3c5d7b9f2e4a6c8"
+JWT_REFRESH_SECRET = "b8e9f1c3d5a7b9e2f4c6d8a1b3e5f7c9d2b4f6e8a1c3d5b7f9e2c4d6a8b1f3e5c7"
+ACCESS_TOKEN_EXPIRY = "1800"
+REFRESH_TOKEN_EXPIRY = "2592000"
+ADMIN_EMAIL = "a.khalid@abdigital.ma"
+CACHE_TTL = "3600000"
+STATIC_URL = "https://static.mediabuying.ac"
+
+# Build configuration
+[build]
+command = ""
+
+# Deployment settings
+[deployment]
+workers_dev = true

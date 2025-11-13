@@ -1,0 +1,31 @@
+NOTES IMPORTANTES - Admin MBA
+==============================
+
+[2025-11-11] PROBLÈME AFFICHAGE PROGRAMMES DANS CLASSES
+--------------------------------------------------------
+Problème: Les classes affichent plusieurs programmes (ex: "MBA V1, MBA V3") au lieu d'un seul programme.
+
+Cause: Le code utilise maintenant `program_title` depuis `classes.program_id` au lieu de `GROUP_CONCAT` sur les programmes des membres.
+
+Fichiers modifiés:
+- modules/api.js: Ligne 2180 - Utilise `p.title as program_title` depuis `classes.program_id`
+- pages/classes.js: Lignes 273-277 et 348-352 - Affiche `program_title` au lieu de `programs`
+
+Solution appliquée:
+- La requête SQL utilise maintenant `LEFT JOIN programs p ON c.program_id = p.id`
+- Le frontend affiche un seul badge avec `program_title`
+
+STATUT: Code corrigé localement mais problème persiste en production.
+
+VÉRIFICATION:
+- La requête SQL retourne bien "MBA V3" pour v3-300 (testé directement)
+- Le code local utilise bien `program_title` au lieu de `programs`
+- Le frontend génère un seul badge avec `program_title`
+
+ACTION REQUISE: 
+1. Vérifier que le code est bien déployé (wrangler deploy)
+2. Vider le cache du navigateur (Ctrl+Shift+R ou Cmd+Shift+R)
+3. Vérifier que les classes ont bien un `program_id` défini dans la base de données
+4. Vérifier si le problème vient du cache Cloudflare ou du Worker
+5. Tester l'API directement: GET /api/classes et vérifier le champ `program_title` dans la réponse JSON
+
