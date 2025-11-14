@@ -29,3 +29,13 @@ ACTION REQUISE:
 4. Vérifier si le problème vient du cache Cloudflare ou du Worker
 5. Tester l'API directement: GET /api/classes et vérifier le champ `program_title` dans la réponse JSON
 
+[2025-01-27] STATUT MEMBRES - VALEUR IS_ACTIVE
+------------------------------------------------
+IMPORTANT: Dans la table `membres`, le champ `is_active` utilise les valeurs suivantes:
+- `is_active = 1` : Membre actif (par défaut)
+- `is_active = 0` : Membre inactif/désactivé
+- `is_active = 9` : Membre BANNI (ne peut pas se connecter, accès refusé)
+
+Cette convention doit être respectée dans tout le code qui gère les statuts des membres.
+Voir ARCHITECTURE.md pour plus de détails sur la gestion des statuts.
+

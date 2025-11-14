@@ -15,6 +15,9 @@ export function getMembersPage(user) {
         <button class="btn btn-outline-primary" onclick="refreshMembers()">
           <i class="bi bi-arrow-clockwise me-2"></i>Actualiser
         </button>
+        <a href="/members/status" class="btn btn-warning">
+          <i class="bi bi-shield-exclamation me-2"></i>Gérer les Statuts
+        </a>
         <a href="/members/add" class="btn btn-primary">
           <i class="bi bi-plus-circle me-2"></i>Ajouter Membre
         </a>
@@ -55,9 +58,9 @@ export function getMembersPage(user) {
         <label for="statusFilter" class="form-label">Statut</label>
         <select class="form-select" id="statusFilter" onchange="filterMembers()">
           <option value="">Tous les statuts</option>
-          <option value="active">Actif</option>
-          <option value="inactive">Inactif</option>
-          <option value="suspended">Suspendu</option>
+          <option value="1">Actif</option>
+          <option value="0">Inactif</option>
+          <option value="9">Banni</option>
         </select>
       </div>
     </div>
@@ -373,7 +376,7 @@ export function getMembersPage(user) {
             <span class="badge bg-info">\${member.school_role || 'student'}</span>
           </td>
           <td>
-            <span class="badge \${member.school_status === 'active' ? 'bg-success' : 'bg-danger'}">\${member.school_status || 'inactive'}</span>
+            \${getMemberStatusBadge(member.is_active)}
           </td>
           <td>
             \${formattedFields}
@@ -497,6 +500,17 @@ export function getMembersPage(user) {
       console.log('handleUrlParams called - logic moved to loadClasses()');
     }
 
+    function getMemberStatusBadge(isActive) {
+      if (isActive === 1) {
+        return '<span class="badge bg-success">Actif</span>';
+      } else if (isActive === 0) {
+        return '<span class="badge bg-secondary">Inactif</span>';
+      } else if (isActive === 9) {
+        return '<span class="badge bg-danger">Banni</span>';
+      }
+      return '<span class="badge bg-secondary">Inconnu</span>';
+    }
+
     // Make functions globally accessible
     window.loadMembers = loadMembers;
     window.renderMembersTable = renderMembersTable;
@@ -505,6 +519,7 @@ export function getMembersPage(user) {
     window.confirmDelete = confirmDelete;
     window.refreshMembers = refreshMembers;
     window.showAlert = showAlert;
+    window.getMemberStatusBadge = getMemberStatusBadge;
   `;
 
   return getAdminLayout('Membres', content, '/members', user) + `<script>${scripts}</script>`;

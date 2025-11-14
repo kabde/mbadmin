@@ -23,6 +23,11 @@ import { getCourseEditPage } from './pages/course-edit.js';
 import { getModulesPage } from './pages/modules.js';
 import { getReclamationsPage } from './pages/reclamations.js';
 import { getDashboardPage } from './pages/dashboard.js';
+import { getTafsPage } from './pages/tafs.js';
+import { getTafEditPage } from './pages/taf-edit.js';
+import { getTafFeedbacksPage } from './pages/taf-feedbacks.js';
+import { getSchoolConfigPage } from './pages/school-config.js';
+import { getCommentsPage } from './pages/comments.js';
 import { getErrorPage } from './pages/error.js';
 import { getMaintenancePage } from './pages/maintenance.js';
 
@@ -201,6 +206,55 @@ export default {
         });
       }
 
+      // Route: Page TAFs
+      if (path === '/tafs') {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+
+        return new Response(getTafsPage(user), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      // Route: Add TAF page
+      if (path === '/tafs/add') {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+
+        return new Response(getTafEditPage(user), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      // Route: Edit TAF page
+      if (path.startsWith('/tafs/edit/')) {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+
+        const tafId = path.split('/')[3];
+        return new Response(getTafEditPage(user, tafId), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      // Route: TAF Feedbacks ranking
+      if (path === '/tafs/feedbacks') {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+
+        return new Response(getTafFeedbacksPage(user), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+
       // Route: Course view page
       if (path.startsWith('/courses/view/')) {
         const user = await auth.getUserFromSession(request);
@@ -346,6 +400,53 @@ export default {
         
         const memberId = path.split('/')[3];
         return new Response(getMemberManagePage(user, memberId, 'edit'), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+
+      // Route: Member status management
+      if (path === '/members/status') {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+        
+        // Vérifier que l'utilisateur est admin
+        if (user.role !== 'admin') {
+          return new Response('Access denied. Admin role required.', { status: 403 });
+        }
+        
+        const { getMemberStatusPage } = await import('./pages/member-status.js');
+        return new Response(getMemberStatusPage(user), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+      
+      // Route: School Config
+      if (path === '/school-config') {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+        
+        // Vérifier que l'utilisateur est admin
+        if (user.role !== 'admin') {
+          return new Response('Access denied. Admin role required.', { status: 403 });
+        }
+        
+        return new Response(getSchoolConfigPage(user), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+      
+      // Route: Page comments
+      if (path === '/comments') {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+        
+        return new Response(getCommentsPage(user), {
           headers: { 'Content-Type': 'text/html; charset=utf-8' }
         });
       }

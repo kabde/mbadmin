@@ -188,6 +188,7 @@ export function getVideoEditPage(user, videoId = null) {
   const scripts = `
     let schools = [];
     let programs = [];
+    let speakers = [];
     let tags = [];
     let availableLanguages = [
       { code: 'fr', name: 'Français', flag: '🇫🇷', default: true },
@@ -277,6 +278,7 @@ export function getVideoEditPage(user, videoId = null) {
     document.addEventListener('DOMContentLoaded', function() {
       loadSchools();
       loadPrograms();
+      loadSpeakers();
       loadTags();
       setupEventListeners();
       
@@ -312,11 +314,63 @@ export function getVideoEditPage(user, videoId = null) {
         
         if (result.success) {
           programs = result.programs;
+          populateProgramsSelect();
         }
       } catch (error) {
         console.error('Error loading programs:', error);
         showAlert('Error loading programs', 'danger');
       }
+    }
+
+    async function loadSpeakers() {
+      try {
+        console.log('👥 Loading all speakers...');
+        const response = await fetch('/api/speakers');
+        const result = await response.json();
+        
+        if (result.success) {
+          speakers = result.speakers || [];
+          console.log('✅ Speakers loaded:', speakers.length);
+          // Populate speakers select with all speakers initially
+          populateSpeakersSelect();
+        } else {
+          console.error('❌ Error loading speakers:', result.error);
+        }
+      } catch (error) {
+        console.error('❌ Error loading speakers:', error);
+        showAlert('Error loading speakers', 'danger');
+      }
+    }
+
+    function populateSpeakersSelect(schoolId = null) {
+      const speakerSelect = document.getElementById('videoSpeakers');
+      speakerSelect.innerHTML = '';
+      
+      // Filter speakers by school if schoolId is provided, otherwise show all
+      const filteredSpeakers = schoolId 
+        ? speakers.filter(s => s.school_id == schoolId)
+        : speakers;
+      
+      filteredSpeakers.forEach(speaker => {
+        const option = document.createElement('option');
+        option.value = speaker.id;
+        option.textContent = \`\${speaker.first_name || ''} \${speaker.last_name || ''}\`.trim();
+        speakerSelect.appendChild(option);
+      });
+      
+      console.log('✅ Speakers select populated with', filteredSpeakers.length, 'speakers');
+    }
+
+    function populateProgramsSelect() {
+      const programSelect = document.getElementById('videoPrograms');
+      programSelect.innerHTML = '';
+      
+      programs.forEach(program => {
+        const option = document.createElement('option');
+        option.value = program.id;
+        option.textContent = program.title;
+        programSelect.appendChild(option);
+      });
     }
 
     async function loadTags() {
@@ -349,48 +403,27 @@ export function getVideoEditPage(user, videoId = null) {
     async function updateProgramsAndSpeakersForSchool(schoolId) {
       console.log('🔄 updateProgramsAndSpeakersForSchool called with schoolId:', schoolId);
       const programSelect = document.getElementById('videoPrograms');
-      const speakerSelect = document.getElementById('videoSpeakers');
       
-      // Clear both selects
-      programSelect.innerHTML = '';
-      speakerSelect.innerHTML = '';
-      
+      // Filter programs by school if schoolId is provided, otherwise show all
       if (schoolId) {
-        try {
-          console.log('📡 Fetching school data for schoolId:', schoolId);
-          // Fetch programs and speakers for this school
-          const response = await fetch(\`/api/schools/\${schoolId}\`);
-          const result = await response.json();
-          
-          console.log('📡 School data response:', result);
-          
-          if (result.success) {
-            console.log('✅ School data loaded successfully');
-            // Populate programs
-            result.programs.forEach(program => {
-              const option = document.createElement('option');
-              option.value = program.id;
-              option.textContent = program.title;
-              programSelect.appendChild(option);
-            });
-            
-            // Populate speakers
-            result.speakers.forEach(speaker => {
-              const option = document.createElement('option');
-              option.value = speaker.id;
-              option.textContent = \`\${speaker.first_name} \${speaker.last_name}\`;
-              speakerSelect.appendChild(option);
-            });
-            console.log('✅ Programs and speakers populated');
-          } else {
-            console.error('❌ School data API failed:', result);
-          }
-        } catch (error) {
-          console.error('❌ Error loading school data:', error);
-          showAlert('Error loading school data', 'danger');
-        }
+        // Filter programs by school
+        const schoolPrograms = programs.filter(p => p.school_id == schoolId);
+        programSelect.innerHTML = '';
+        schoolPrograms.forEach(program => {
+          const option = document.createElement('option');
+          option.value = program.id;
+          option.textContent = program.title;
+          programSelect.appendChild(option);
+        });
+        
+        // Filter speakers by school
+        populateSpeakersSelect(schoolId);
+        console.log('✅ Programs and speakers filtered for school:', schoolId);
       } else {
-        console.log('⚠️ No schoolId provided');
+        // No school selected, show all programs and speakers
+        populateProgramsSelect();
+        populateSpeakersSelect();
+        console.log('⚠️ No schoolId provided, showing all programs and speakers');
       }
     }
 

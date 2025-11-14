@@ -58,11 +58,14 @@ export function getSidebarHTML(activePage, user) {
       { href: '/quizzes', label: 'Quiz', icon: 'bi-question-circle', active: activePage === '/quizzes' },
       { href: '/courses', label: 'Cours', icon: 'bi-mortarboard', active: activePage === '/courses' },
       { href: '/modules', label: 'Modules', icon: 'bi-collection', active: activePage === '/modules' },
+      { href: '/tafs', label: 'Travaux à Faire', icon: 'bi-list-check', active: activePage === '/tafs' },
       { href: '/videos', label: 'Videos', icon: 'bi-play-circle', active: activePage === '/videos' },
       { href: '/speakers', label: 'Formateurs', icon: 'bi-people', active: activePage === '/speakers' },
       { href: '/members', label: 'Membres', icon: 'bi-person-badge', active: activePage === '/members' },
       { href: '/school-fields', label: 'Champs École', icon: 'bi-gear', active: activePage === '/school-fields' },
       { href: '/reclamations', label: 'Réclamations', icon: 'bi-exclamation-triangle', active: activePage === '/reclamations' },
+      { href: '/comments', label: 'Commentaires', icon: 'bi-chat-dots', active: activePage === '/comments' },
+      { href: '/school-config', label: 'Config Écoles', icon: 'bi-gear', active: activePage === '/school-config' },
       { href: '/support', label: 'Support', icon: 'bi-headset', active: activePage === '/support' }
     ];
 

@@ -70,6 +70,18 @@ export class ApiModule {
         case '/api/dashboard':
           return await this.getDashboardApi(request, user);
         
+        case '/api/tafs':
+          return await this.getTafsApi(request, user);
+        
+        case '/api/school-config':
+          return await this.getSchoolConfigApi(request, user);
+        
+        case '/api/comments':
+          return await this.getCommentsApi(request, user);
+        
+        case '/api/taf-feedbacks':
+          return await this.getTafFeedbacksApi(request, user);
+        
         default:
           if (path.startsWith('/api/admin/users/') && path.includes('/toggle-status')) {
             const userId = path.split('/')[4];
@@ -98,6 +110,10 @@ export class ApiModule {
           if (path.startsWith('/api/courses/') && path.split('/').length === 4) {
             const courseId = path.split('/')[3];
             return await this.getCourseByIdApi(request, user, courseId, this.env);
+          }
+          if (path.startsWith('/api/tafs/') && path.split('/').length === 4) {
+            // Les routes /api/tafs/:id sont gérées dans getTafsApi
+            return await this.getTafsApi(request, user);
           }
           if (path === '/api/speakers') {
             return await this.getSpeakersApi(request, user);
@@ -177,6 +193,16 @@ export class ApiModule {
           if (path.startsWith('/api/class-representatives/') && path.split('/').length === 4) {
             const repId = path.split('/')[3];
             return await this.getClassRepresentativeByIdApi(request, user, repId);
+          }
+          if (path.startsWith('/api/member-status/')) {
+            return await this.getMemberStatusApi(request, user);
+          }
+          if (path.startsWith('/api/school-config/')) {
+            return await this.getSchoolConfigApi(request, user);
+          }
+          
+          if (path.startsWith('/api/taf-feedbacks/')) {
+            return await this.getTafFeedbacksApi(request, user);
           }
           
           return new Response(JSON.stringify({ error: 'API endpoint not found' }), {
@@ -1650,6 +1676,7 @@ export class ApiModule {
         const programId = url.searchParams.get('program_id');
         const classId = url.searchParams.get('class_id');
         const membreId = url.searchParams.get('membre_id');
+        const status = url.searchParams.get('status');
         
         let query = `
           SELECT 
@@ -1692,6 +1719,11 @@ export class ApiModule {
         if (membreId) {
           query += ` AND m.id = ?`;
           params.push(membreId);
+        }
+        
+        if (status !== null && status !== '') {
+          query += ` AND m.is_active = ?`;
+          params.push(parseInt(status));
         }
         
         if (search) {
@@ -4268,6 +4300,900 @@ export class ApiModule {
 
     } catch (error) {
       console.error('Error in getDashboardApi:', error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Internal server error'
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // API: TAFs (Travaux à Faire)
+  async getTafsApi(request, user) {
+    try {
+      const method = request.method;
+      const url = new URL(request.url);
+      const pathParts = url.pathname.split('/').filter(p => p);
+      const tafId = pathParts.length > 2 ? parseInt(pathParts[2]) : null;
+
+      if (method === 'GET') {
+        // Créer la table de liaison si elle n'existe pas
+        await this.env.AFFILIATE_DB.prepare(`
+          CREATE TABLE IF NOT EXISTS taf_programs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            taf_id INTEGER NOT NULL,
+            program_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(taf_id, program_id),
+            FOREIGN KEY (taf_id) REFERENCES tafs(id) ON DELETE CASCADE,
+            FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
+          )
+        `).run();
+
+        if (tafId) {
+          // Récupérer un TAF spécifique avec ses programmes
+          const query = `
+            SELECT 
+              t.*,
+              s.name as school_name
+            FROM tafs t
+            LEFT JOIN schools s ON t.school_id = s.id
+            WHERE t.id = ?
+          `;
+
+          const result = await this.env.AFFILIATE_DB.prepare(query).bind(tafId).first();
+
+          if (!result) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: 'TAF not found'
+            }), {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+
+          // Récupérer les programmes associés
+          const programsQuery = `
+            SELECT 
+              tp.program_id,
+              p.title as program_name
+            FROM taf_programs tp
+            LEFT JOIN programs p ON tp.program_id = p.id
+            WHERE tp.taf_id = ?
+          `;
+          const programsResult = await this.env.AFFILIATE_DB.prepare(programsQuery).bind(tafId).all();
+          
+          result.program_ids = (programsResult.results || []).map(p => p.program_id);
+          result.programs = programsResult.results || [];
+          
+          // Rétrocompatibilité : si aucun programme dans taf_programs, utiliser program_id
+          if (result.program_ids.length === 0 && result.program_id) {
+            result.program_ids = [result.program_id];
+            const programQuery = await this.env.AFFILIATE_DB.prepare('SELECT id, title FROM programs WHERE id = ?').bind(result.program_id).first();
+            if (programQuery) {
+              result.programs = [{ program_id: programQuery.id, program_name: programQuery.title }];
+            }
+          }
+
+          // Parser le contenu JSON
+          try {
+            result.content = JSON.parse(result.content);
+          } catch (e) {
+            result.content = {};
+          }
+
+          return new Response(JSON.stringify({
+            success: true,
+            taf: result
+          }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } else {
+          // Récupérer tous les TAFs avec leurs programmes
+          const query = `
+            SELECT 
+              t.*,
+              s.name as school_name
+            FROM tafs t
+            LEFT JOIN schools s ON t.school_id = s.id
+            ORDER BY t.start_date DESC, t.created_at DESC
+          `;
+
+          const result = await this.env.AFFILIATE_DB.prepare(query).all();
+          const tafs = result.results || [];
+
+          // Pour chaque TAF, récupérer ses programmes
+          for (let taf of tafs) {
+            const programsQuery = `
+              SELECT 
+                tp.program_id,
+                p.title as program_name
+              FROM taf_programs tp
+              LEFT JOIN programs p ON tp.program_id = p.id
+              WHERE tp.taf_id = ?
+            `;
+            const programsResult = await this.env.AFFILIATE_DB.prepare(programsQuery).bind(taf.id).all();
+            
+            taf.program_ids = (programsResult.results || []).map(p => p.program_id);
+            taf.programs = programsResult.results || [];
+            
+            // Rétrocompatibilité
+            if (taf.program_ids.length === 0 && taf.program_id) {
+              taf.program_ids = [taf.program_id];
+              const programQuery = await this.env.AFFILIATE_DB.prepare('SELECT id, title FROM programs WHERE id = ?').bind(taf.program_id).first();
+              if (programQuery) {
+                taf.programs = [{ program_id: programQuery.id, program_name: programQuery.title }];
+                taf.program_name = programQuery.title; // Pour compatibilité avec l'ancien code
+              }
+            } else if (taf.programs.length > 0) {
+              // Pour compatibilité avec l'ancien code, utiliser le premier programme
+              taf.program_name = taf.programs[0].program_name;
+            }
+
+            // Parser le contenu JSON
+            try {
+              taf.content = JSON.parse(taf.content);
+            } catch (e) {
+              taf.content = {};
+            }
+          }
+
+          return new Response(JSON.stringify({
+            success: true,
+            tafs: tafs
+          }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+
+      if (method === 'POST') {
+        // Créer un nouveau TAF
+        const data = await request.json();
+        const { start_date, end_date, content, status, program_ids, school_id, program_id } = data;
+
+        if (!start_date || !end_date || !content) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'start_date, end_date, and content are required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Créer la table de liaison si elle n'existe pas
+        await this.env.AFFILIATE_DB.prepare(`
+          CREATE TABLE IF NOT EXISTS taf_programs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            taf_id INTEGER NOT NULL,
+            program_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(taf_id, program_id),
+            FOREIGN KEY (taf_id) REFERENCES tafs(id) ON DELETE CASCADE,
+            FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
+          )
+        `).run();
+
+        // Rétrocompatibilité : si program_ids n'existe pas, utiliser program_id
+        const finalProgramIds = program_ids || (program_id ? [program_id] : null);
+        const firstProgramId = finalProgramIds && finalProgramIds.length > 0 ? finalProgramIds[0] : null;
+
+        const insertQuery = `
+          INSERT INTO tafs (start_date, end_date, content, status, program_id, school_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'), STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'))
+        `;
+
+        const contentJson = typeof content === 'string' ? content : JSON.stringify(content);
+
+        const insertResult = await this.env.AFFILIATE_DB.prepare(insertQuery)
+          .bind(start_date, end_date, contentJson, status || 'draft', firstProgramId, school_id || null)
+          .run();
+
+        const newTafId = insertResult.meta.last_row_id;
+
+        // Insérer les relations avec les programmes
+        if (finalProgramIds && finalProgramIds.length > 0) {
+          for (const pid of finalProgramIds) {
+            try {
+              await this.env.AFFILIATE_DB.prepare(`
+                INSERT INTO taf_programs (taf_id, program_id)
+                VALUES (?, ?)
+              `).bind(newTafId, pid).run();
+            } catch (e) {
+              // Ignorer les doublons
+              console.log('Program already linked:', pid);
+            }
+          }
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'TAF créé avec succès',
+          taf_id: newTafId
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'PUT' && tafId) {
+        // Modifier un TAF
+        const data = await request.json();
+        const { start_date, end_date, content, status, program_ids, school_id, program_id } = data;
+
+        if (!start_date || !end_date || !content) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'start_date, end_date, and content are required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Créer la table de liaison si elle n'existe pas
+        await this.env.AFFILIATE_DB.prepare(`
+          CREATE TABLE IF NOT EXISTS taf_programs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            taf_id INTEGER NOT NULL,
+            program_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(taf_id, program_id),
+            FOREIGN KEY (taf_id) REFERENCES tafs(id) ON DELETE CASCADE,
+            FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE
+          )
+        `).run();
+
+        // Rétrocompatibilité : si program_ids n'existe pas, utiliser program_id
+        const finalProgramIds = program_ids || (program_id ? [program_id] : []);
+        const firstProgramId = finalProgramIds.length > 0 ? finalProgramIds[0] : null;
+
+        const updateQuery = `
+          UPDATE tafs
+          SET start_date = ?,
+              end_date = ?,
+              content = ?,
+              status = ?,
+              program_id = ?,
+              school_id = ?,
+              updated_at = STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW')
+          WHERE id = ?
+        `;
+
+        const contentJson = typeof content === 'string' ? content : JSON.stringify(content);
+
+        await this.env.AFFILIATE_DB.prepare(updateQuery)
+          .bind(start_date, end_date, contentJson, status || 'draft', firstProgramId, school_id || null, tafId)
+          .run();
+
+        // Mettre à jour les relations avec les programmes
+        // Supprimer toutes les relations existantes
+        await this.env.AFFILIATE_DB.prepare(`
+          DELETE FROM taf_programs WHERE taf_id = ?
+        `).bind(tafId).run();
+
+        // Insérer les nouvelles relations
+        if (finalProgramIds && finalProgramIds.length > 0) {
+          for (const pid of finalProgramIds) {
+            try {
+              await this.env.AFFILIATE_DB.prepare(`
+                INSERT INTO taf_programs (taf_id, program_id)
+                VALUES (?, ?)
+              `).bind(tafId, pid).run();
+            } catch (e) {
+              // Ignorer les erreurs
+              console.log('Error linking program:', pid, e);
+            }
+          }
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'TAF mis à jour avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'DELETE' && tafId) {
+        // Supprimer un TAF
+        const deleteQuery = `DELETE FROM tafs WHERE id = ?`;
+
+        await this.env.AFFILIATE_DB.prepare(deleteQuery).bind(tafId).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'TAF supprimé avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Method not allowed'
+      }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('Error in getTafsApi:', error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Internal server error'
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // API: Gestion des statuts des membres (activer, désactiver, bannir)
+  async getMemberStatusApi(request, user) {
+    try {
+      const url = new URL(request.url);
+      const method = request.method;
+      const pathParts = url.pathname.split('/').filter(p => p);
+      const memberId = pathParts.length > 3 ? parseInt(pathParts[3]) : null;
+
+      // Vérifier que l'utilisateur est admin
+      if (user.role !== 'admin') {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Access denied. Admin role required.'
+        }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'POST' && memberId) {
+        // Changer le statut d'un membre
+        const data = await request.json();
+        const { new_status, note } = data;
+
+        // Valider le nouveau statut (1=actif, 0=inactif, 9=banni)
+        if (![0, 1, 9].includes(new_status)) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Invalid status. Must be 0 (inactive), 1 (active), or 9 (banned)'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Récupérer le statut actuel du membre
+        const currentMember = await this.env.AFFILIATE_DB.prepare(`
+          SELECT id, is_active, first_name, last_name, email
+          FROM membres
+          WHERE id = ?
+        `).bind(memberId).first();
+
+        if (!currentMember) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Member not found'
+          }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const oldStatus = currentMember.is_active || 0;
+
+        // Si le statut ne change pas, retourner un message
+        if (oldStatus === new_status) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Member already has this status'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Déterminer l'action
+        let action = '';
+        if (new_status === 1) {
+          action = oldStatus === 9 ? 'unban' : 'activate';
+        } else if (new_status === 0) {
+          action = 'deactivate';
+        } else if (new_status === 9) {
+          action = 'ban';
+        }
+
+        // Mettre à jour le statut du membre
+        await this.env.AFFILIATE_DB.prepare(`
+          UPDATE membres 
+          SET is_active = ?, updated_at = STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW')
+          WHERE id = ?
+        `).bind(new_status, memberId).run();
+
+        // Enregistrer dans l'historique
+        await this.env.AFFILIATE_DB.prepare(`
+          INSERT INTO member_status_history 
+          (membre_id, admin_user_id, old_status, new_status, action, note, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'))
+        `).bind(memberId, user.id, oldStatus, new_status, action, note || null).run();
+
+        const statusNames = { 0: 'inactive', 1: 'active', 9: 'banned' };
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: `Member status changed from ${statusNames[oldStatus]} to ${statusNames[new_status]}`,
+          member: {
+            id: memberId,
+            old_status: oldStatus,
+            new_status: new_status,
+            action: action
+          }
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'GET' && memberId) {
+        // Récupérer l'historique d'un membre
+        const history = await this.env.AFFILIATE_DB.prepare(`
+          SELECT 
+            msh.*,
+            u.username as admin_username,
+            u.email as admin_email,
+            m.first_name as member_first_name,
+            m.last_name as member_last_name,
+            m.email as member_email
+          FROM member_status_history msh
+          LEFT JOIN users u ON msh.admin_user_id = u.id
+          LEFT JOIN membres m ON msh.membre_id = m.id
+          WHERE msh.membre_id = ?
+          ORDER BY msh.created_at DESC
+          LIMIT 50
+        `).bind(memberId).all();
+
+        return new Response(JSON.stringify({
+          success: true,
+          history: history.results || []
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Method not allowed or missing member ID'
+      }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur API member status:', error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Internal server error'
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // API: School Config - Configuration des écoles
+  async getSchoolConfigApi(request, user) {
+    try {
+      const method = request.method;
+      const url = new URL(request.url);
+      const pathParts = url.pathname.split('/').filter(p => p);
+      // pathParts: ['api', 'school-config'] ou ['api', 'school-config', '1']
+      const configId = pathParts.length > 2 ? parseInt(pathParts[2]) : null;
+
+      // Vérifier que l'utilisateur est admin
+      if (user.role !== 'admin') {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Access denied. Admin role required.'
+        }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'GET') {
+        // Créer les colonnes si elles n'existent pas (SQLite ne supporte pas IF NOT EXISTS, on ignore l'erreur)
+        try {
+          await this.env.AFFILIATE_DB.prepare(`
+            ALTER TABLE school_config ADD COLUMN facebook_pixel TEXT
+          `).run();
+        } catch (e) {
+          // La colonne existe peut-être déjà, continuer
+          console.log('facebook_pixel column may already exist');
+        }
+        try {
+          await this.env.AFFILIATE_DB.prepare(`
+            ALTER TABLE school_config ADD COLUMN google_analytics TEXT
+          `).run();
+        } catch (e) {
+          // La colonne existe peut-être déjà, continuer
+          console.log('google_analytics column may already exist');
+        }
+
+        // Récupérer toutes les configurations avec le nom de l'école
+        const query = `
+          SELECT 
+            sc.*,
+            s.name as school_name
+          FROM school_config sc
+          LEFT JOIN schools s ON sc.school_id = s.id
+          ORDER BY sc.school_id ASC
+        `;
+
+        const result = await this.env.AFFILIATE_DB.prepare(query).all();
+
+        return new Response(JSON.stringify({
+          success: true,
+          configs: result.results || []
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'PUT' && configId) {
+        // Créer les colonnes si elles n'existent pas (SQLite ne supporte pas IF NOT EXISTS, on ignore l'erreur)
+        try {
+          await this.env.AFFILIATE_DB.prepare(`
+            ALTER TABLE school_config ADD COLUMN facebook_pixel TEXT
+          `).run();
+        } catch (e) {
+          // La colonne existe peut-être déjà, continuer
+          console.log('facebook_pixel column may already exist');
+        }
+        try {
+          await this.env.AFFILIATE_DB.prepare(`
+            ALTER TABLE school_config ADD COLUMN google_analytics TEXT
+          `).run();
+        } catch (e) {
+          // La colonne existe peut-être déjà, continuer
+          console.log('google_analytics column may already exist');
+        }
+
+        // Mettre à jour une configuration
+        const data = await request.json();
+        const { smtp_token, smtp_email_from, discord_link, skool_link, facebook_pixel, google_analytics } = data;
+
+        await this.env.AFFILIATE_DB.prepare(`
+          UPDATE school_config 
+          SET 
+            smtp_token = ?,
+            smtp_email_from = ?,
+            discord_link = ?,
+            skool_link = ?,
+            facebook_pixel = ?,
+            google_analytics = ?,
+            updated_at = STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW')
+          WHERE id = ?
+        `).bind(
+          smtp_token || null,
+          smtp_email_from || null,
+          discord_link || null,
+          skool_link || null,
+          facebook_pixel || null,
+          google_analytics || null,
+          configId
+        ).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Configuration mise à jour avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'POST') {
+        // Créer les colonnes si elles n'existent pas (SQLite ne supporte pas IF NOT EXISTS, on ignore l'erreur)
+        try {
+          await this.env.AFFILIATE_DB.prepare(`
+            ALTER TABLE school_config ADD COLUMN facebook_pixel TEXT
+          `).run();
+        } catch (e) {
+          // La colonne existe peut-être déjà, continuer
+          console.log('facebook_pixel column may already exist');
+        }
+        try {
+          await this.env.AFFILIATE_DB.prepare(`
+            ALTER TABLE school_config ADD COLUMN google_analytics TEXT
+          `).run();
+        } catch (e) {
+          // La colonne existe peut-être déjà, continuer
+          console.log('google_analytics column may already exist');
+        }
+
+        // Créer une nouvelle configuration
+        const data = await request.json();
+        const { school_id, smtp_token, smtp_email_from, discord_link, skool_link, facebook_pixel, google_analytics } = data;
+
+        if (!school_id) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'school_id is required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        await this.env.AFFILIATE_DB.prepare(`
+          INSERT INTO school_config 
+          (school_id, smtp_token, smtp_email_from, discord_link, skool_link, facebook_pixel, google_analytics, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'), STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'))
+        `).bind(
+          school_id,
+          smtp_token || null,
+          smtp_email_from || null,
+          discord_link || null,
+          skool_link || null,
+          facebook_pixel || null,
+          google_analytics || null
+        ).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Configuration créée avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Method not allowed'
+      }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur API school config:', error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Internal server error'
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // API: Comments - Gestion des commentaires
+  async getCommentsApi(request, user) {
+    try {
+      const method = request.method;
+      const url = new URL(request.url);
+      const pathParts = url.pathname.split('/').filter(p => p);
+      const commentId = pathParts.length > 2 ? parseInt(pathParts[2]) : null;
+
+      if (method === 'GET') {
+        // Récupérer tous les commentaires
+        const query = `
+          SELECT 
+            c.*,
+            m.first_name || ' ' || m.last_name as author_name,
+            m.email as author_email
+          FROM comments c
+          LEFT JOIN membres m ON c.member_id = m.id
+          ORDER BY c.created_at DESC
+        `;
+
+        const result = await this.env.AFFILIATE_DB.prepare(query).all();
+
+        return new Response(JSON.stringify({
+          success: true,
+          comments: result.results || []
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'PUT' && commentId) {
+        // Mettre à jour le statut d'un commentaire
+        const data = await request.json();
+        const { status } = data;
+
+        if (!status || !['active', 'approved', 'pending', 'rejected', 'inactive'].includes(status)) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Invalid status. Must be active, approved, pending, rejected, or inactive'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        await this.env.AFFILIATE_DB.prepare(`
+          UPDATE comments
+          SET status = ?,
+              updated_at = STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW')
+          WHERE id = ?
+        `).bind(status, commentId).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Statut du commentaire mis à jour avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'DELETE' && commentId) {
+        // Supprimer un commentaire
+        await this.env.AFFILIATE_DB.prepare(`
+          DELETE FROM comments WHERE id = ?
+        `).bind(commentId).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Commentaire supprimé avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Method not allowed'
+      }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur API comments:', error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Internal server error'
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // API: TAF Feedbacks - Gestion des feedbacks TAF
+  async getTafFeedbacksApi(request, user) {
+    try {
+      const method = request.method;
+      const url = new URL(request.url);
+      const pathParts = url.pathname.split('/').filter(p => p);
+      const endpoint = pathParts.length > 2 ? pathParts[2] : null;
+
+      if (method === 'GET' && endpoint === 'ranking') {
+        // Récupérer le classement par classe (basé sur le nombre de feedbacks)
+        const query = `
+          SELECT 
+            c.id as class_id,
+            c.title as class_name,
+            c.code as class_code,
+            t.id as taf_id,
+            t.content as taf_content,
+            p.id as program_id,
+            p.title as program_name,
+            COUNT(tf.id) as feedback_count,
+            MAX(tf.created_at) as last_submission
+          FROM taf_feedbacks tf
+          INNER JOIN classes c ON tf.class_id = c.id
+          INNER JOIN tafs t ON tf.taf_id = t.id
+          LEFT JOIN taf_programs tp ON t.id = tp.taf_id
+          LEFT JOIN programs p ON tp.program_id = p.id
+          WHERE tf.status = 'active'
+          GROUP BY c.id, c.title, c.code, t.id, p.id, p.title
+          ORDER BY feedback_count DESC, last_submission DESC
+        `;
+
+        const result = await this.env.AFFILIATE_DB.prepare(query).all();
+        const rankings = result.results || [];
+
+        // Parser le contenu TAF pour obtenir le titre
+        rankings.forEach(ranking => {
+          if (ranking.taf_content) {
+            try {
+              const content = typeof ranking.taf_content === 'string' 
+                ? JSON.parse(ranking.taf_content) 
+                : ranking.taf_content;
+              const firstLang = Object.keys(content)[0] || 'fr';
+              ranking.taf_title = content[firstLang]?.title || 'TAF #' + ranking.taf_id;
+            } catch (e) {
+              ranking.taf_title = 'TAF #' + ranking.taf_id;
+            }
+          } else {
+            ranking.taf_title = 'TAF #' + ranking.taf_id;
+          }
+        });
+
+        return new Response(JSON.stringify({
+          success: true,
+          rankings: rankings
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'GET') {
+        // Récupérer tous les feedbacks avec filtres
+        const classId = url.searchParams.get('class_id');
+        const tafId = url.searchParams.get('taf_id');
+
+        let query = `
+          SELECT 
+            tf.*,
+            m.first_name || ' ' || m.last_name as member_name,
+            m.email as member_email,
+            c.id as class_id,
+            c.title as class_name,
+            c.code as class_code,
+            t.id as taf_id,
+            t.content as taf_content
+          FROM taf_feedbacks tf
+          INNER JOIN membres m ON tf.member_id = m.id
+          INNER JOIN classes c ON tf.class_id = c.id
+          LEFT JOIN tafs t ON tf.taf_id = t.id
+          WHERE 1=1
+        `;
+
+        const params = [];
+        if (classId) {
+          query += ` AND c.id = ?`;
+          params.push(classId);
+        }
+        if (tafId) {
+          query += ` AND t.id = ?`;
+          params.push(tafId);
+        }
+
+        query += ` ORDER BY tf.created_at DESC`;
+
+        const result = await this.env.AFFILIATE_DB.prepare(query).bind(...params).all();
+        const feedbacks = result.results || [];
+
+        // Parser le contenu TAF pour obtenir le titre
+        feedbacks.forEach(feedback => {
+          if (feedback.taf_content) {
+            try {
+              const content = typeof feedback.taf_content === 'string' 
+                ? JSON.parse(feedback.taf_content) 
+                : feedback.taf_content;
+              const firstLang = Object.keys(content)[0] || 'fr';
+              feedback.taf_title = content[firstLang]?.title || 'TAF #' + feedback.taf_id;
+            } catch (e) {
+              feedback.taf_title = 'TAF #' + feedback.taf_id;
+            }
+          } else {
+            feedback.taf_title = 'TAF #' + feedback.taf_id;
+          }
+        });
+
+        return new Response(JSON.stringify({
+          success: true,
+          feedbacks: feedbacks
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Method not allowed'
+      }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur API taf-feedbacks:', error);
       return new Response(JSON.stringify({
         success: false,
         error: 'Internal server error'
