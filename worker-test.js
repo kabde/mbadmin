@@ -26,6 +26,7 @@ import { getDashboardPage } from './pages/dashboard.js';
 import { getTafsPage } from './pages/tafs.js';
 import { getTafEditPage } from './pages/taf-edit.js';
 import { getTafFeedbacksPage } from './pages/taf-feedbacks.js';
+import { getClassFeedbacksPage } from './pages/class-feedbacks.js';
 import { getSchoolConfigPage } from './pages/school-config.js';
 import { getCommentsPage } from './pages/comments.js';
 import { getErrorPage } from './pages/error.js';
@@ -255,6 +256,26 @@ export default {
         });
       }
 
+      // Route: Class Feedbacks page
+      if (path.startsWith('/feedbacks/class/')) {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+
+        const classId = path.split('/')[3];
+        if (!classId || isNaN(classId)) {
+          return new Response(getErrorPage('Invalid class ID', 400), {
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
+            status: 400
+          });
+        }
+
+        return new Response(getClassFeedbacksPage(user, classId), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+
       // Route: Course view page
       if (path.startsWith('/courses/view/')) {
         const user = await auth.getUserFromSession(request);
@@ -475,6 +496,26 @@ export default {
         });
       }
       
+      // Route: Job - Traitement automatique des feedbacks
+      if (path === '/jobs/feedback/evaluation') {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // Vérifier que l'utilisateur est admin
+        if (user.role !== 'admin') {
+          return new Response(JSON.stringify({ error: 'Access denied. Admin role required.' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        
+        return await api.processFeedbackEvaluationBatchApi(request, user);
+      }
       
       
       // Routes API protégées - UTILISATION DES MODULES API + AUTH

@@ -82,6 +82,9 @@ export class ApiModule {
         case '/api/taf-feedbacks':
           return await this.getTafFeedbacksApi(request, user);
         
+        case '/api/taf-feedbacks/generate-evaluation':
+          return await this.generateEvaluationApi(request, user);
+        
         default:
           if (path.startsWith('/api/admin/users/') && path.includes('/toggle-status')) {
             const userId = path.split('/')[4];
@@ -2212,7 +2215,7 @@ export class ApiModule {
             COUNT(DISTINCT mc.membre_id) as student_count,
             COUNT(DISTINCT CASE 
               WHEN mc.status = 'active' 
-              AND (mem.is_active = 1 OR mem.is_active IS NULL)
+              AND mem.is_active = 1
               THEN mc.membre_id 
             END) as active_members_count,
             p.title as program_title,
@@ -5184,6 +5187,61 @@ export class ApiModule {
         });
       }
 
+      if (method === 'PUT') {
+        // Mettre à jour l'évaluation d'un feedback
+        const data = await request.json();
+        const { id, evaluation, evaluation_data, evaluation_status } = data;
+
+        if (!id) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Feedback ID is required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Préparer les données d'évaluation en JSON
+        let evaluationDataJson = null;
+        if (evaluation_data) {
+          try {
+            evaluationDataJson = typeof evaluation_data === 'string' 
+              ? evaluation_data 
+              : JSON.stringify(evaluation_data);
+          } catch (e) {
+            evaluationDataJson = JSON.stringify({ comment: evaluation_data });
+          }
+        }
+
+        // Mettre à jour le feedback avec l'évaluation
+        const updateQuery = `
+          UPDATE taf_feedbacks 
+          SET 
+            evaluation = ?,
+            evaluation_data = ?,
+            evaluation_status = ?,
+            evaluation_date = STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'),
+            evaluator_id = 7,
+            updated_at = STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW')
+          WHERE id = ?
+        `;
+
+        await this.env.AFFILIATE_DB.prepare(updateQuery).bind(
+          evaluation || null,
+          evaluationDataJson,
+          evaluation_status || 'pending',
+          id
+        ).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Évaluation enregistrée avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
       return new Response(JSON.stringify({
         success: false,
         error: 'Method not allowed'
@@ -5197,6 +5255,374 @@ export class ApiModule {
       return new Response(JSON.stringify({
         success: false,
         error: 'Internal server error'
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // API: Générer une évaluation avec OpenAI
+  async generateEvaluationApi(request, user) {
+    try {
+      if (request.method !== 'POST') {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Method not allowed'
+        }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const data = await request.json();
+      const { feedback_id, feedback_text, member_name, class_code, taf_title } = data;
+
+      if (!feedback_id || !feedback_text) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'feedback_id and feedback_text are required'
+        }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Vérifier que la clé API OpenAI est disponible
+      const openaiApiKey = this.env.OPENAI_API_KEY;
+      if (!openaiApiKey) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'OpenAI API key not configured'
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Importer le prompt
+      const { EVALUATION_PROMPT } = await import('../data/prompts.js');
+
+      // Construire le message pour OpenAI
+      const userMessage = `Rapport d'avancement de l'équipe:\n\nRapporteur: ${member_name || 'Non spécifié'}\nClasse: ${class_code || 'Non spécifiée'}\nTAF: ${taf_title || 'Non spécifié'}\n\nContenu du rapport:\n${feedback_text}`;
+
+      // Appeler l'API OpenAI
+      const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openaiApiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: EVALUATION_PROMPT
+            },
+            {
+              role: 'user',
+              content: userMessage
+            }
+          ],
+          temperature: 0.7,
+          response_format: { type: 'json_object' }
+        })
+      });
+
+      if (!openaiResponse.ok) {
+        const errorData = await openaiResponse.text();
+        console.error('OpenAI API Error:', errorData);
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'OpenAI API error: ' + openaiResponse.statusText
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      const openaiResult = await openaiResponse.json();
+      const generatedContent = openaiResult.choices[0]?.message?.content;
+
+      if (!generatedContent) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'No content generated by OpenAI'
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Parser le JSON généré
+      let evaluationData;
+      try {
+        evaluationData = JSON.parse(generatedContent);
+        console.log('Parsed evaluation data:', evaluationData);
+      } catch (e) {
+        console.error('Error parsing OpenAI JSON:', e);
+        console.error('Raw content:', generatedContent);
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Invalid JSON from OpenAI: ' + e.message
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Construire le commentaire d'évaluation à partir des données générées
+      let evaluationComment = '';
+      if (evaluationData.commentaire_equipe) {
+        evaluationComment = evaluationData.commentaire_equipe;
+      }
+
+      console.log('Returning evaluation:', {
+        evaluation: evaluationComment,
+        evaluation_data: evaluationData,
+        evaluation_status: 'pending'
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        evaluation: {
+          evaluation: evaluationComment,
+          evaluation_data: evaluationData,
+          evaluation_status: 'pending'
+        }
+      }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur API generate-evaluation:', error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Internal server error: ' + error.message
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // API: Traitement automatique des feedbacks (batch de 5)
+  async processFeedbackEvaluationBatchApi(request, user) {
+    try {
+      if (request.method !== 'GET') {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Method not allowed'
+        }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Vérifier que la clé API OpenAI est disponible
+      const openaiApiKey = this.env.OPENAI_API_KEY;
+      if (!openaiApiKey) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'OpenAI API key not configured'
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Récupérer les feedbacks non évalués (nombre configuré via variable d'environnement)
+      const batchSize = parseInt(this.env.FEEDBACK_BATCH_SIZE || '50', 10);
+      
+      const query = `
+        SELECT 
+          tf.id,
+          tf.feedback_text,
+          tf.taf_id,
+          tf.class_id,
+          tf.member_id,
+          m.first_name || ' ' || m.last_name as member_name,
+          c.code as class_code,
+          t.content as taf_content
+        FROM taf_feedbacks tf
+        LEFT JOIN membres m ON tf.member_id = m.id
+        LEFT JOIN classes c ON tf.class_id = c.id
+        LEFT JOIN tafs t ON tf.taf_id = t.id
+        WHERE (tf.evaluation IS NULL OR tf.evaluation = '')
+          AND (tf.evaluation_status IS NULL OR tf.evaluation_status = '')
+          AND tf.feedback_text IS NOT NULL 
+          AND tf.feedback_text != ''
+          AND LENGTH(TRIM(tf.feedback_text)) >= 10
+        ORDER BY tf.created_at ASC
+        LIMIT ?
+      `;
+      
+      const queryResult = await this.env.AFFILIATE_DB.prepare(query).bind(batchSize).all();
+      const feedbacks = queryResult.results || [];
+
+      if (feedbacks.length === 0) {
+        return new Response(JSON.stringify({
+          success: true,
+          processed: 0,
+          approved: 0,
+          needs_revision: 0,
+          errors: [],
+          message: 'Aucun feedback à traiter'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      console.log(`📦 Traitement de ${feedbacks.length} feedback(s) non traité(s) (batch size: ${batchSize})...`);
+
+      // Importer le prompt
+      const { EVALUATION_PROMPT } = await import('../data/prompts.js');
+
+      let processed = 0;
+      let approved = 0;
+      let needs_revision = 0;
+      const errors = [];
+
+      // Traiter chaque feedback
+      for (const feedback of feedbacks) {
+        try {
+          // Extraire le titre du TAF
+          let tafTitle = 'TAF #' + feedback.taf_id;
+          if (feedback.taf_content) {
+            try {
+              const tafContent = typeof feedback.taf_content === 'string' 
+                ? JSON.parse(feedback.taf_content) 
+                : feedback.taf_content;
+              const firstLang = Object.keys(tafContent)[0] || 'fr';
+              tafTitle = tafContent[firstLang]?.title || tafTitle;
+            } catch (e) {
+              console.warn('Erreur parsing taf_content:', e);
+            }
+          }
+
+          // Construire le message pour OpenAI
+          const userMessage = `Rapport d'avancement de l'équipe:\n\nRapporteur: ${feedback.member_name || 'Non spécifié'}\nClasse: ${feedback.class_code || 'Non spécifiée'}\nTAF: ${tafTitle}\n\nContenu du rapport:\n${feedback.feedback_text}`;
+
+          // Appeler l'API OpenAI
+          const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${openaiApiKey}`
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o-mini',
+              messages: [
+                {
+                  role: 'system',
+                  content: EVALUATION_PROMPT
+                },
+                {
+                  role: 'user',
+                  content: userMessage
+                }
+              ],
+              temperature: 0.7,
+              response_format: { type: 'json_object' }
+            })
+          });
+
+          if (!openaiResponse.ok) {
+            const errorData = await openaiResponse.text();
+            console.error(`❌ OpenAI API Error pour feedback ${feedback.id}:`, errorData);
+            errors.push({
+              feedback_id: feedback.id,
+              error: 'OpenAI API error: ' + openaiResponse.statusText
+            });
+            continue;
+          }
+
+          const openaiResult = await openaiResponse.json();
+          const generatedContent = openaiResult.choices[0]?.message?.content;
+
+          if (!generatedContent) {
+            errors.push({
+              feedback_id: feedback.id,
+              error: 'No content generated by OpenAI'
+            });
+            continue;
+          }
+
+          // Parser le JSON généré
+          let evaluationData;
+          try {
+            evaluationData = JSON.parse(generatedContent);
+          } catch (e) {
+            console.error(`❌ Error parsing OpenAI JSON pour feedback ${feedback.id}:`, e);
+            errors.push({
+              feedback_id: feedback.id,
+              error: 'Invalid JSON from OpenAI: ' + e.message
+            });
+            continue;
+          }
+
+          // Extraire le content_type et déterminer le statut
+          const contentType = evaluationData.content_type || 'incomplet';
+          const evaluationStatus = contentType === 'compte_rendu' ? 'approved' : 'needs_revision';
+
+          // Construire le commentaire d'évaluation
+          let evaluationComment = '';
+          if (evaluationData.commentaire_equipe) {
+            evaluationComment = evaluationData.commentaire_equipe;
+          }
+
+          // Mettre à jour le feedback dans la base de données
+          await this.env.AFFILIATE_DB.prepare(`
+            UPDATE taf_feedbacks 
+            SET evaluation = ?,
+                evaluation_data = ?,
+                evaluation_status = ?,
+                evaluation_date = STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'),
+                evaluator_id = 7
+            WHERE id = ?
+          `).bind(
+            evaluationComment,
+            JSON.stringify(evaluationData),
+            evaluationStatus,
+            feedback.id
+          ).run();
+
+          processed++;
+          if (evaluationStatus === 'approved') {
+            approved++;
+          } else {
+            needs_revision++;
+          }
+
+          console.log(`✅ Feedback ${feedback.id} traité: ${evaluationStatus} (${contentType})`);
+
+        } catch (error) {
+          console.error(`❌ Erreur traitement feedback ${feedback.id}:`, error);
+          errors.push({
+            feedback_id: feedback.id,
+            error: error.message
+          });
+        }
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        processed: processed,
+        approved: approved,
+        needs_revision: needs_revision,
+        errors: errors,
+        batch_size: batchSize,
+        message: `Traitement terminé: ${processed} feedback(s) traité(s)`
+      }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur API process-feedback-evaluation-batch:', error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Internal server error: ' + error.message
       }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }

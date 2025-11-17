@@ -276,13 +276,16 @@ export function getClassesPage(user) {
           programDisplay = \`<span class="badge bg-secondary">\${classItem.program_title}</span>\`;
         }
         
+        // Format active members count - utiliser directement la valeur de l'API
+        const activeCount = classItem.active_members_count !== null && classItem.active_members_count !== undefined ? classItem.active_members_count : 0;
+        
         row.innerHTML = \`
           <td><span class="badge bg-primary">\${classItem.code}</span></td>
           <td>\${classItem.title}</td>
           <td>\${classItem.school_name || 'Unknown'}</td>
           <td>\${programDisplay}</td>
           <td>
-            <span class="badge bg-success">\${classItem.active_members_count || 0}</span>
+            <span class="badge bg-success">\${activeCount}</span>
           </td>
           <td>
             <span class="badge bg-info">\${classItem.student_count || 0}</span>
@@ -351,13 +354,16 @@ export function getClassesPage(user) {
           programDisplay = \`<span class="badge bg-secondary">\${classItem.program_title}</span>\`;
         }
         
+        // Format active members count - utiliser directement la valeur de l'API
+        const activeCount = classItem.active_members_count !== null && classItem.active_members_count !== undefined ? classItem.active_members_count : 0;
+        
         row.innerHTML = \`
           <td><span class="badge bg-primary">\${classItem.code}</span></td>
           <td>\${classItem.title}</td>
           <td>\${classItem.school_name || 'Unknown'}</td>
           <td>\${programDisplay}</td>
           <td>
-            <span class="badge bg-success">\${classItem.active_members_count || 0}</span>
+            <span class="badge bg-success">\${activeCount}</span>
           </td>
           <td>
             <span class="badge bg-info">\${classItem.student_count || 0}</span>

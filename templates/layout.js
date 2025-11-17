@@ -16,7 +16,15 @@ export function getAdminLayout(title, content, activePage, user) {
   <!-- Quill.js CSS -->
   <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
   <!-- Custom Admin CSS -->
-  <link rel="stylesheet" href="/styles/admin.css?v=${Date.now()}">
+  <link rel="stylesheet" href="/styles/admin.css?v=${Date.now()}" onerror="console.error('Failed to load admin.css')">
+  <style>
+    /* Fallback styles if CSS fails to load */
+    .sidebar { position: fixed; top: 0; left: 0; height: 100vh; width: 280px; background: linear-gradient(180deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: white; z-index: 1000; display: flex; flex-direction: column; }
+    .sidebar-header { padding: 1.5rem 1.25rem; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: #000000; min-height: 80px; }
+    .sidebar-logo-container { display: flex; align-items: center; justify-content: center; flex: 1; padding: 0.5rem 0; }
+    .sidebar-logo { max-width: 180px; height: auto; object-fit: contain; }
+    .main-content { margin-left: 280px; min-height: 100vh; background-color: #f8f9fa; }
+  </style>
 </head>
 <body class="bg-light">
   <!-- Sidebar -->
@@ -72,41 +80,39 @@ export function getSidebarHTML(activePage, user) {
   return `
     <!-- Sidebar -->
     <nav class="sidebar bg-dark text-white" id="sidebar">
-      <div class="sidebar-header p-3 border-bottom border-secondary">
-        <div class="d-flex align-items-center">
-          <div class="sidebar-brand-icon me-2">
-            <i class="bi bi-bullseye fs-4 text-primary"></i>
-          </div>
-          <span class="sidebar-brand-text fw-bold">Admin MBA</span>
+      <div class="sidebar-header">
+        <div class="sidebar-logo-container">
+          <img src="https://static.mediabuying.ac/mb-logo.png" alt="Media Buying Academy" class="sidebar-logo">
         </div>
-        <button class="btn-close btn-close-white d-lg-none" onclick="toggleSidebar()"></button>
+        <button class="btn-close btn-close-white d-lg-none sidebar-close-btn" onclick="toggleSidebar()" aria-label="Close sidebar"></button>
       </div>
       
-      <div class="sidebar-nav p-3">
+      <div class="sidebar-nav">
         <ul class="nav nav-pills flex-column">
           ${navItems.map(item => `
-            <li class="nav-item mb-1">
-              <a href="${item.href}" class="nav-link ${item.active ? 'active' : 'text-white-50'} d-flex align-items-center">
-                <i class="${item.icon} me-3"></i>
-                <span>${item.label}</span>
+            <li class="nav-item">
+              <a href="${item.href}" class="nav-link ${item.active ? 'active' : ''} d-flex align-items-center">
+                <i class="${item.icon} nav-icon"></i>
+                <span class="nav-label">${item.label}</span>
               </a>
             </li>
           `).join('')}
         </ul>
       </div>
       
-      <div class="sidebar-footer p-3 border-top border-secondary mt-auto">
-        <div class="d-flex align-items-center mb-3">
-          <div class="avatar bg-primary text-white rounded-circle me-3 d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+      <div class="sidebar-footer">
+        <div class="sidebar-user-info">
+          <div class="sidebar-user-avatar">
             ${user.username.charAt(0).toUpperCase()}
           </div>
-          <div>
-            <div class="fw-bold">${user.username}</div>
-            <small class="text-white-50">Affiliate Partner</small>
+          <div class="sidebar-user-details">
+            <div class="sidebar-user-name">${user.username}</div>
+            <small class="sidebar-user-role">Administrateur</small>
           </div>
         </div>
-        <button class="btn btn-outline-light btn-sm w-100" onclick="logout()">
-          <i class="bi bi-box-arrow-right me-2"></i>Logout
+        <button class="sidebar-logout-btn" onclick="logout()">
+          <i class="bi bi-box-arrow-right"></i>
+          <span>Déconnexion</span>
         </button>
       </div>
     </nav>

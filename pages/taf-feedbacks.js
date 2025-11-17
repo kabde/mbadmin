@@ -12,7 +12,10 @@ export function getTafFeedbacksPage(user) {
           <h1 class="h3 mb-1">Classement des Feedbacks TAF par Classe</h1>
           <p class="text-muted mb-0">Consultez les feedbacks des TAFs classés par classe</p>
         </div>
-        <div>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-primary" id="btnProcessEvaluations">
+            <i class="bi bi-magic me-2"></i>Traitement Automatique
+          </button>
           <a href="/tafs" class="btn btn-outline-secondary">
             <i class="bi bi-arrow-left me-2"></i>Retour aux TAFs
           </a>
@@ -87,30 +90,6 @@ export function getTafFeedbacksPage(user) {
       </div>
     </div>
 
-    <!-- Feedbacks Modal -->
-    <div class="modal fade" id="feedbacksModal" tabindex="-1">
-      <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title" id="feedbacksModalTitle">Feedbacks de la Classe</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-          </div>
-          <div class="modal-body">
-            <div id="feedbacksModalBody">
-              <div class="text-center py-4">
-                <div class="spinner-border text-primary" role="status">
-                  <span class="visually-hidden">Chargement...</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <script>
       (function() {
         'use strict';
@@ -134,6 +113,13 @@ export function getTafFeedbacksPage(user) {
           if (btnRefresh) {
             btnRefresh.addEventListener('click', function() {
               loadData();
+            });
+          }
+          
+          const btnProcessEvaluations = document.getElementById('btnProcessEvaluations');
+          if (btnProcessEvaluations) {
+            btnProcessEvaluations.addEventListener('click', function() {
+              processEvaluations();
             });
           }
           
@@ -258,9 +244,9 @@ export function getTafFeedbacksPage(user) {
             html += '<td><span class="badge bg-info">Classé par nombre</span></td>';
             html += '<td><small class="text-muted">' + lastSubmission + '</small></td>';
             html += '<td>';
-            html += '<button type="button" class="btn btn-outline-info btn-sm" onclick="viewFeedbacks(' + item.class_id + ', ' + item.taf_id + ')" title="Voir les feedbacks">';
+            html += '<a href="/feedbacks/class/' + item.class_id + '" class="btn btn-outline-info btn-sm" title="Voir les feedbacks">';
             html += '<i class="bi bi-eye"></i>';
-            html += '</button>';
+            html += '</a>';
             html += '</td>';
             html += '</tr>';
           });
@@ -282,82 +268,6 @@ export function getTafFeedbacksPage(user) {
           renderTable();
         }
 
-        async function viewFeedbacks(classId, tafId) {
-          const modal = new bootstrap.Modal(document.getElementById('feedbacksModal'));
-          const modalTitle = document.getElementById('feedbacksModalTitle');
-          const modalBody = document.getElementById('feedbacksModalBody');
-          
-          // Trouver les infos de la classe et du TAF
-          const classInfo = classes.find(c => c.id == classId);
-          const tafInfo = tafs.find(t => t.id == tafId);
-          const className = classInfo ? (classInfo.title || classInfo.code) : 'Classe #' + classId;
-          const tafTitle = tafInfo ? (tafInfo.content ? (() => {
-            try {
-              const content = typeof tafInfo.content === 'string' ? JSON.parse(tafInfo.content) : tafInfo.content;
-              const firstLang = Object.keys(content)[0] || 'fr';
-              return content[firstLang]?.title || 'TAF #' + tafId;
-            } catch (e) {
-              return 'TAF #' + tafId;
-            }
-          })() : 'TAF #' + tafId) : 'TAF #' + tafId;
-          
-          modalTitle.textContent = 'Feedbacks - ' + className + ' - ' + tafTitle;
-          modalBody.innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Chargement...</span></div></div>';
-          
-          modal.show();
-          
-          try {
-            const response = await fetch('/api/taf-feedbacks?class_id=' + classId + '&taf_id=' + tafId);
-            const result = await response.json();
-            
-            if (result.success && result.feedbacks) {
-              const feedbacks = result.feedbacks;
-              
-              if (feedbacks.length === 0) {
-                modalBody.innerHTML = '<div class="alert alert-info">Aucun feedback trouvé pour cette classe et ce TAF.</div>';
-                return;
-              }
-              
-              // Trier par date (plus récents en premier)
-              feedbacks.sort((a, b) => {
-                const dateA = new Date(a.created_at);
-                const dateB = new Date(b.created_at);
-                return dateB - dateA;
-              });
-              
-              let html = '<div class="list-group">';
-              feedbacks.forEach(function(feedback) {
-                const date = new Date(feedback.created_at).toLocaleDateString('fr-FR', {
-                  year: 'numeric',
-                  month: '2-digit',
-                  day: '2-digit',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                });
-                
-                html += '<div class="list-group-item">';
-                html += '<div class="d-flex justify-content-between align-items-start mb-2">';
-                html += '<div>';
-                html += '<h6 class="mb-1">' + escapeHtml(feedback.member_name || feedback.member_email || 'Anonyme') + '</h6>';
-                html += '<small class="text-muted">' + escapeHtml(feedback.member_email || '') + '</small>';
-                html += '</div>';
-                html += '<small class="text-muted">' + date + '</small>';
-                html += '</div>';
-                html += '<p class="mb-0">' + escapeHtml(feedback.feedback_text || '') + '</p>';
-                html += '</div>';
-              });
-              html += '</div>';
-              
-              modalBody.innerHTML = html;
-            } else {
-              modalBody.innerHTML = '<div class="alert alert-danger">Erreur lors du chargement des feedbacks: ' + (result.error || 'Erreur inconnue') + '</div>';
-            }
-          } catch (error) {
-            console.error('Error loading feedbacks:', error);
-            modalBody.innerHTML = '<div class="alert alert-danger">Erreur: ' + error.message + '</div>';
-          }
-        }
-
         function escapeHtml(text) {
           if (!text) return '';
           const div = document.createElement('div');
@@ -365,15 +275,79 @@ export function getTafFeedbacksPage(user) {
           return div.innerHTML;
         }
 
+        async function processEvaluations() {
+          const btn = document.getElementById('btnProcessEvaluations');
+          const originalText = btn.innerHTML;
+          
+          try {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Traitement en cours...';
+            
+            const response = await fetch('/jobs/feedback/evaluation');
+            const result = await response.json();
+            
+            const batchSize = result.batch_size || 50;
+            showInfo('Traitement en cours... Traitement de ' + batchSize + ' feedbacks...');
+            
+            if (result.success) {
+              let message = 'Traitement terminé: ' + result.processed + ' feedback(s) traité(s)';
+              if (result.approved > 0 || result.needs_revision > 0) {
+                message += ' (' + result.approved + ' approuvé(s), ' + result.needs_revision + ' nécessitant révision)';
+              }
+              
+              if (result.errors && result.errors.length > 0) {
+                message += '. ' + result.errors.length + ' erreur(s) rencontrée(s).';
+              }
+              
+              showSuccess(message);
+              
+              // Si des feedbacks ont été traités, recharger les données
+              if (result.processed > 0) {
+                setTimeout(function() {
+                  loadData();
+                }, 1000);
+              }
+              
+              // Si il reste des feedbacks à traiter, proposer de continuer
+              if (result.processed === batchSize) {
+                setTimeout(function() {
+                  if (confirm(batchSize + ' feedbacks traités. Voulez-vous continuer le traitement ?')) {
+                    processEvaluations();
+                  }
+                }, 2000);
+              }
+            } else {
+              showError('Erreur lors du traitement: ' + (result.error || 'Erreur inconnue'));
+            }
+          } catch (error) {
+            console.error('Error processing evaluations:', error);
+            showError('Erreur: ' + error.message);
+          } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+          }
+        }
+
         function showError(message) {
           const container = document.getElementById('alertContainer');
           container.innerHTML = '<div class="alert alert-danger alert-dismissible fade show" role="alert">' +
-            message +
+            escapeHtml(message) +
             '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
         }
 
-        // Make functions globally accessible
-        window.viewFeedbacks = viewFeedbacks;
+        function showSuccess(message) {
+          const container = document.getElementById('alertContainer');
+          container.innerHTML = '<div class="alert alert-success alert-dismissible fade show" role="alert">' +
+            escapeHtml(message) +
+            '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+        }
+
+        function showInfo(message) {
+          const container = document.getElementById('alertContainer');
+          container.innerHTML = '<div class="alert alert-info alert-dismissible fade show" role="alert">' +
+            escapeHtml(message) +
+            '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+        }
       })();
     </script>
   `;
