@@ -29,6 +29,7 @@ import { getTafFeedbacksPage } from './pages/taf-feedbacks.js';
 import { getClassFeedbacksPage } from './pages/class-feedbacks.js';
 import { getSchoolConfigPage } from './pages/school-config.js';
 import { getCommentsPage } from './pages/comments.js';
+import { getAudioAnnouncementsPage } from './pages/audio-announcements.js';
 import { getErrorPage } from './pages/error.js';
 import { getMaintenancePage } from './pages/maintenance.js';
 
@@ -468,6 +469,18 @@ export default {
         }
         
         return new Response(getCommentsPage(user), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
+      
+      // Route: Page audio announcements
+      if (path === '/audio-announcements') {
+        const user = await auth.getUserFromSession(request);
+        if (!user) {
+          return Response.redirect(url.origin + '/login', 302);
+        }
+        
+        return new Response(getAudioAnnouncementsPage(user), {
           headers: { 'Content-Type': 'text/html; charset=utf-8' }
         });
       }

@@ -85,6 +85,9 @@ export class ApiModule {
         case '/api/taf-feedbacks/generate-evaluation':
           return await this.generateEvaluationApi(request, user);
         
+        case '/api/audio-announcements':
+          return await this.getAudioAnnouncementsApi(request, user);
+        
         default:
           if (path.startsWith('/api/admin/users/') && path.includes('/toggle-status')) {
             const userId = path.split('/')[4];
@@ -206,6 +209,10 @@ export class ApiModule {
           
           if (path.startsWith('/api/taf-feedbacks/')) {
             return await this.getTafFeedbacksApi(request, user);
+          }
+          if (path.startsWith('/api/audio-announcements/') && path.split('/').length === 4) {
+            const announcementId = path.split('/')[3];
+            return await this.getAudioAnnouncementsApi(request, user, announcementId);
           }
           
           return new Response(JSON.stringify({ error: 'API endpoint not found' }), {
@@ -1586,28 +1593,52 @@ export class ApiModule {
         });
       }
 
-      // Vérifier le type de fichier
-      const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-      if (!allowedTypes.includes(file.type)) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: 'File type not allowed. Only JPEG, PNG, GIF, and WebP are allowed.'
-        }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Vérifier la taille (max 5MB)
-      const maxSize = 5 * 1024 * 1024; // 5MB
-      if (file.size > maxSize) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: 'File too large. Maximum size is 5MB.'
-        }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
+      // Vérifier le type de fichier selon le type d'upload
+      if (type === 'audio') {
+        const allowedAudioTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/aac', 'audio/m4a'];
+        if (!allowedAudioTypes.includes(file.type)) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'File type not allowed. Only MP3, WAV, OGG, WebM, AAC, and M4A are allowed.'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        // Taille max pour audio: 50MB
+        const maxAudioSize = 50 * 1024 * 1024; // 50MB
+        if (file.size > maxAudioSize) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'File too large. Maximum size is 50MB.'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      } else {
+        // Pour les images
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+        if (!allowedTypes.includes(file.type)) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'File type not allowed. Only JPEG, PNG, GIF, and WebP are allowed.'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        // Taille max pour images: 5MB
+        const maxSize = 5 * 1024 * 1024; // 5MB
+        if (file.size > maxSize) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'File too large. Maximum size is 5MB.'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
       }
 
       // Générer le nom de fichier avec structure WordPress (année/mois/jour)
@@ -5433,28 +5464,49 @@ export class ApiModule {
       }
 
       // Récupérer les feedbacks non évalués (nombre configuré via variable d'environnement)
+      // Si plusieurs feedbacks dans la même classe le même jour, on prend celui avec le plus de contenu
       const batchSize = parseInt(this.env.FEEDBACK_BATCH_SIZE || '50', 10);
       
       const query = `
+        WITH ranked_feedbacks AS (
+          SELECT 
+            tf.id,
+            tf.feedback_text,
+            tf.taf_id,
+            tf.class_id,
+            tf.member_id,
+            m.first_name || ' ' || m.last_name as member_name,
+            c.code as class_code,
+            t.content as taf_content,
+            DATE(tf.created_at) as feedback_date,
+            LENGTH(TRIM(tf.feedback_text)) as content_length,
+            ROW_NUMBER() OVER (
+              PARTITION BY tf.class_id, DATE(tf.created_at) 
+              ORDER BY LENGTH(TRIM(tf.feedback_text)) DESC, tf.created_at DESC
+            ) as rn
+          FROM taf_feedbacks tf
+          LEFT JOIN membres m ON tf.member_id = m.id
+          LEFT JOIN classes c ON tf.class_id = c.id
+          LEFT JOIN tafs t ON tf.taf_id = t.id
+          WHERE (tf.evaluation IS NULL OR tf.evaluation = '')
+            AND (tf.evaluation_status IS NULL OR tf.evaluation_status = '')
+            AND tf.feedback_text IS NOT NULL 
+            AND tf.feedback_text != ''
+            AND LENGTH(TRIM(tf.feedback_text)) >= 10
+            AND (tf.status IS NULL OR tf.status != 'deleted')
+        )
         SELECT 
-          tf.id,
-          tf.feedback_text,
-          tf.taf_id,
-          tf.class_id,
-          tf.member_id,
-          m.first_name || ' ' || m.last_name as member_name,
-          c.code as class_code,
-          t.content as taf_content
-        FROM taf_feedbacks tf
-        LEFT JOIN membres m ON tf.member_id = m.id
-        LEFT JOIN classes c ON tf.class_id = c.id
-        LEFT JOIN tafs t ON tf.taf_id = t.id
-        WHERE (tf.evaluation IS NULL OR tf.evaluation = '')
-          AND (tf.evaluation_status IS NULL OR tf.evaluation_status = '')
-          AND tf.feedback_text IS NOT NULL 
-          AND tf.feedback_text != ''
-          AND LENGTH(TRIM(tf.feedback_text)) >= 10
-        ORDER BY tf.created_at ASC
+          id,
+          feedback_text,
+          taf_id,
+          class_id,
+          member_id,
+          member_name,
+          class_code,
+          taf_content
+        FROM ranked_feedbacks
+        WHERE rn = 1
+        ORDER BY feedback_date ASC, content_length DESC
         LIMIT ?
       `;
       
@@ -5620,6 +5672,235 @@ export class ApiModule {
 
     } catch (error) {
       console.error('❌ Erreur API process-feedback-evaluation-batch:', error);
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'Internal server error: ' + error.message
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // API: Gestion des annonces audio
+  async getAudioAnnouncementsApi(request, user, announcementId = null) {
+    try {
+      const method = request.method;
+
+      if (method === 'GET') {
+        if (announcementId) {
+          // Récupérer une annonce spécifique
+          const query = `
+            SELECT * FROM audio_announcements WHERE id = ?
+          `;
+          const result = await this.env.AFFILIATE_DB.prepare(query).bind(announcementId).first();
+          
+          if (!result) {
+            return new Response(JSON.stringify({
+              success: false,
+              error: 'Annonce non trouvée'
+            }), {
+              status: 404,
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+
+          return new Response(JSON.stringify({
+            success: true,
+            announcement: result
+          }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } else {
+          // Récupérer toutes les annonces
+          const query = `
+            SELECT * FROM audio_announcements 
+            ORDER BY created_at DESC
+          `;
+          const result = await this.env.AFFILIATE_DB.prepare(query).all();
+          
+          return new Response(JSON.stringify({
+            success: true,
+            announcements: result.results || []
+          }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+
+      if (method === 'POST') {
+        // Créer une nouvelle annonce
+        const data = await request.json();
+        const { title, description, audio_url, audio_key, duration, file_size, mime_type, target_programs, is_active } = data;
+
+        if (!title || !audio_url || !audio_key) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Title, audio_url, and audio_key are required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (!target_programs || !Array.isArray(target_programs) || target_programs.length === 0) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'At least one target program is required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const targetProgramsJson = JSON.stringify(target_programs);
+
+        const insertQuery = `
+          INSERT INTO audio_announcements 
+          (title, description, audio_url, audio_key, duration, file_size, mime_type, target_programs, is_active, created_by, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'), STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW'))
+        `;
+
+        const result = await this.env.AFFILIATE_DB.prepare(insertQuery).bind(
+          title,
+          description || null,
+          audio_url,
+          audio_key,
+          duration || null,
+          file_size || null,
+          mime_type || null,
+          targetProgramsJson,
+          is_active !== undefined ? is_active : 1,
+          user.id
+        ).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Annonce créée avec succès',
+          id: result.meta.last_row_id
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'PUT') {
+        // Mettre à jour une annonce
+        if (!announcementId) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Announcement ID is required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const data = await request.json();
+        const { title, description, audio_url, audio_key, duration, file_size, mime_type, target_programs, is_active } = data;
+
+        if (!title || !audio_url || !audio_key) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Title, audio_url, and audio_key are required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (!target_programs || !Array.isArray(target_programs) || target_programs.length === 0) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'At least one target program is required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const targetProgramsJson = JSON.stringify(target_programs);
+
+        const updateQuery = `
+          UPDATE audio_announcements 
+          SET title = ?,
+              description = ?,
+              audio_url = ?,
+              audio_key = ?,
+              duration = ?,
+              file_size = ?,
+              mime_type = ?,
+              target_programs = ?,
+              is_active = ?,
+              updated_at = STRFTIME('%Y-%m-%d %H:%M:%S', 'NOW')
+          WHERE id = ?
+        `;
+
+        await this.env.AFFILIATE_DB.prepare(updateQuery).bind(
+          title,
+          description || null,
+          audio_url,
+          audio_key,
+          duration || null,
+          file_size || null,
+          mime_type || null,
+          targetProgramsJson,
+          is_active !== undefined ? is_active : 1,
+          announcementId
+        ).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Annonce mise à jour avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      if (method === 'DELETE') {
+        // Supprimer une annonce
+        if (!announcementId) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'Announcement ID is required'
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        // Récupérer l'annonce pour supprimer le fichier de R2
+        const getQuery = `SELECT audio_key FROM audio_announcements WHERE id = ?`;
+        const announcement = await this.env.AFFILIATE_DB.prepare(getQuery).bind(announcementId).first();
+
+        if (announcement && announcement.audio_key) {
+          try {
+            // Supprimer le fichier de R2
+            await this.env.MBA_STORAGE.delete(announcement.audio_key);
+          } catch (error) {
+            console.error('Error deleting file from R2:', error);
+            // Continue même si la suppression du fichier échoue
+          }
+        }
+
+        // Supprimer l'annonce de la base de données
+        const deleteQuery = `DELETE FROM audio_announcements WHERE id = ?`;
+        await this.env.AFFILIATE_DB.prepare(deleteQuery).bind(announcementId).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: 'Annonce supprimée avec succès'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      return new Response(JSON.stringify({ success: false, error: 'Method not allowed' }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+    } catch (error) {
+      console.error('❌ Erreur API audio-announcements:', error);
       return new Response(JSON.stringify({
         success: false,
         error: 'Internal server error: ' + error.message
